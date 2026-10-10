@@ -134,3 +134,24 @@ def analyze_samples(bill: str = "sample_bill.pdf", eob: str = "sample_eob.pdf"):
             raise HTTPException(404, f"Sample {name} not found")
         docs.append(extract_document(path.read_bytes(), name, None))
     return analyze_documents(*docs)
+
+
+# ---------- Serve the built React app (production / Docker) ----------
+# In development, Vite serves the frontend on :5173. In production the frontend is built
+# into static files and FastAPI serves them, so the app and API share one URL.
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", Path(__file__).resolve().parents[2] / "frontend" / "dist"))
+
+if FRONTEND_DIST.is_dir():
+    if (FRONTEND_DIST / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def serve_frontend(path: str):
+        if path.startswith("api/"):
+            raise HTTPException(404, "Not found")
+        file = (FRONTEND_DIST / path).resolve()
+        if path and file.is_file() and FRONTEND_DIST.resolve() in file.parents:
+            return FileResponse(file)
+        return FileResponse(FRONTEND_DIST / "index.html")

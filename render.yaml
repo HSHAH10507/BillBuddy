@@ -1,0 +1,12 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo.
+services:
+  - type: web
+    name: billbuddy-health
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false   # Render asks for the value; it is never stored in the repo
+      - key: EXTRACTOR
+        value: auto
