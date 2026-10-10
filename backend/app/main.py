@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -127,13 +128,17 @@ def health():
 @app.post("/api/extract", response_model=ExtractedDocument)
 async def extract_one(file: UploadFile = File(...)):
     """Debug helper: see what BillBuddy extracts from a single document."""
-    return extract_document(await _read(file), file.filename or "upload", file.content_type)
+    data = await _read(file)
+    return await run_in_threadpool(extract_document, data, file.filename or "upload", file.content_type)
 
 
 @app.post("/api/analyze", response_model=AnalysisResult)
 async def analyze(bill: UploadFile = File(...), eob: UploadFile = File(...)):
-    a = extract_document(await _read(bill), bill.filename or "bill", bill.content_type)
-    b = extract_document(await _read(eob), eob.filename or "eob", eob.content_type)
+    bill_data, eob_data = await _read(bill), await _read(eob)
+    # Parsing, OCR and Gemini calls are slow and blocking: run them in a worker thread so the
+    # server keeps answering other requests (including the host's health checks) meanwhile.
+    a = await run_in_threadpool(extract_document, bill_data, bill.filename or "bill", bill.content_type)
+    b = await run_in_threadpool(extract_document, eob_data, eob.filename or "eob", eob.content_type)
     if not a.line_items and not b.line_items:
         details = []
         for d in (a, b):
@@ -145,7 +150,7 @@ async def analyze(bill: UploadFile = File(...), eob: UploadFile = File(...)):
                 " Gemini isn't enabled on this server, so only the built-in layout parser was tried; "
                 "set GEMINI_API_KEY to handle other layouts.")
         raise HTTPException(422, "Couldn't find any charges in either document. " + " | ".join(details) + "." + hint)
-    return analyze_documents(a, b)
+    return await run_in_threadpool(analyze_documents, a, b)
 
 
 @app.get("/api/samples")

@@ -31,7 +31,12 @@ def _get_client():
     if _client is None:
         from google import genai  # imported lazily so the app runs without the key
 
-        _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+        from google.genai import types
+
+        _client = genai.Client(
+            api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"),
+            http_options=types.HttpOptions(timeout=int(os.getenv("GEMINI_TIMEOUT_MS", "25000"))),
+        )
     return _client
 
 
@@ -51,13 +56,16 @@ def _models() -> list[str]:
     return out
 
 
-def _generate(contents: str, models: list[str] | None = None, attempts: int = 3, **config):
+def _generate(contents: str, models: list[str] | None = None, attempts: int = 3, budget_s: float = 30.0, **config):
     """Call Gemini with retries on temporary server errors (5xx / overloaded) and model fallbacks."""
     from google.genai import errors, types
 
     last: Exception | None = None
+    deadline = time.monotonic() + budget_s  # never keep the user waiting longer than this
     for model in models or _models():
         for attempt in range(attempts):
+            if time.monotonic() > deadline:
+                raise last if last else TimeoutError("Gemini time budget exceeded")
             try:
                 return _get_client().models.generate_content(
                     model=model, contents=contents, config=types.GenerateContentConfig(**config)
@@ -137,7 +145,7 @@ def parse_with_gemini(page_texts: list[tuple[int, str]], filename: str, method: 
     text = "\n".join(f"===== PAGE {p} =====\n{t}" for p, t in page_texts)
     try:
         # Preferred: structured output constrained to the schema.
-        response = _generate(EXTRACTION_PROMPT + text, models=[_model()], attempts=2,
+        response = _generate(EXTRACTION_PROMPT + text, models=[_model()], attempts=1, budget_s=20,
                              response_mime_type="application/json", response_schema=_GDoc, temperature=0)
         g = response.parsed if isinstance(response.parsed, _GDoc) else _GDoc.model_validate(json.loads(response.text))
     except Exception as exc:  # noqa: BLE001
@@ -145,7 +153,7 @@ def parse_with_gemini(page_texts: list[tuple[int, str]], filename: str, method: 
         log.warning("Structured Gemini extraction failed (%s); retrying in plain JSON mode", describe_error(exc))
         prompt = (EXTRACTION_PROMPT.replace("Document text", "JSON shape:\n" + json.dumps(_GDoc.model_json_schema())
                                             + "\n\nDocument text") + text)
-        response = _generate(prompt, response_mime_type="application/json", temperature=0)
+        response = _generate(prompt, budget_s=25, response_mime_type="application/json", temperature=0)
         raw = re.sub(r"^```(?:json)?|```$", "", (response.text or "").strip(), flags=re.M).strip()
         g = _GDoc.model_validate(json.loads(raw))
     doc_type = g.doc_type if g.doc_type in ("bill", "eob") else "unknown"
@@ -195,5 +203,7 @@ Data:
 def summarize_with_gemini(payload: dict) -> str:
     from google.genai import types
 
-    response = _generate(SUMMARY_PROMPT + json.dumps(payload, indent=1), temperature=0.2, max_output_tokens=400)
+    # The summary is optional (a template is used otherwise), so give it one quick try only.
+    response = _generate(SUMMARY_PROMPT + json.dumps(payload, indent=1), models=[_model()], attempts=1,
+                         budget_s=15, temperature=0.2, max_output_tokens=400)
     return (response.text or "").strip()
