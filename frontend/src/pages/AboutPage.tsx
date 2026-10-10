@@ -1,92 +1,61 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, Bot, Calculator, FileSearch, Link2, MessageSquareQuote, ScanText, User } from "lucide-react";
+import { ArrowRight, Link2, MessageSquareQuote, SearchCheck, Upload } from "lucide-react";
 
-// ✏️ Edit these with your team's names and roles.
-const TEAM = [
-  { name: "Team member 1", role: "Backend & document parsing" },
-  { name: "Team member 2", role: "Matching & discrepancy rules" },
-  { name: "Team member 3", role: "Frontend & design" },
+const STEPS = [
+  { icon: <Upload size={18} />, title: "Upload your documents",
+    text: "Add the bill from your doctor or hospital and the Explanation of Benefits from your insurance company." },
+  { icon: <Link2 size={18} />, title: "We line up every charge",
+    text: "Each service on your bill is paired with the same service on your EOB, even when they describe it differently." },
+  { icon: <SearchCheck size={18} />, title: "We check the numbers",
+    text: "We look for charges that don't match, services billed twice, and totals that don't add up." },
+  { icon: <MessageSquareQuote size={18} />, title: "You get clear answers",
+    text: "Anything worth a second look is explained in plain English, with a question you can ask before you pay." },
 ];
 
-const PIPELINE = [
-  { icon: <ScanText size={18} />, title: "Read", text: "Text PDFs are read directly (PyMuPDF, pdfplumber). Scans and photos go through Tesseract OCR." },
-  { icon: <FileSearch size={18} />, title: "Extract", text: "A rules parser pulls out dates, codes, charges and totals. If the layout is unfamiliar, Gemini reads it instead." },
-  { icon: <Link2 size={18} />, title: "Match", text: "Each bill line is scored against each EOB line on code, date, description similarity (RapidFuzz) and amount." },
-  { icon: <Calculator size={18} />, title: "Check", text: "Deterministic Python rules compare totals, find duplicates and test whether every line and total adds up." },
-  { icon: <MessageSquareQuote size={18} />, title: "Explain", text: "Findings are written in plain English with their evidence and a suggested question for the provider or insurer." },
-];
-
-const STACK = [
-  "React", "TypeScript", "Vite", "Tailwind CSS", "Recharts", "Python", "FastAPI", "Pydantic",
-  "PyMuPDF", "pdfplumber", "Tesseract OCR", "RapidFuzz", "Gemini", "Docker", "Render",
+const DISCLAIMERS = [
+  "BillBuddy Health helps you prepare questions. It does not confirm billing errors and is not medical, legal or financial advice.",
+  "Always check with your provider and insurance company before paying or disputing a bill.",
+  "Some differences have good explanations, such as a prior balance or a charge from a different visit.",
+  "Bills and EOBs come in many formats, so some documents may not be read correctly.",
+  "Sample documents on this site are fictional. Uploaded files are analyzed and not stored.",
 ];
 
 export default function AboutPage() {
   return (
-    <div className="rise mx-auto max-w-4xl space-y-16 pb-8">
+    <div className="rise mx-auto max-w-3xl space-y-16 pb-8">
       <section>
         <p className="text-xs font-semibold uppercase tracking-widest text-match">About</p>
         <h1 className="mt-2 font-display text-4xl leading-tight sm:text-5xl">Making medical bills make sense.</h1>
         <p className="mt-5 text-lg text-muted">
           Medical bills and insurance statements are written for billing departments, not patients. When the bill
-          from your provider and the Explanation of Benefits from your insurer disagree, most people either pay or give up
-          trying to understand why. We built BillBuddy Health so anyone can compare the two in under a minute and walk
-          into a billing call with specific, evidence-backed questions.
+          from your provider and the statement from your insurer disagree, it's hard to know why, so most people
+          just pay. BillBuddy Health compares the two for you in under a minute, so you can ask the right questions first.
         </p>
       </section>
 
       <section>
         <h2 className="font-display text-2xl">How it works</h2>
-        <ol className="mt-6 space-y-3">
-          {PIPELINE.map((s, i) => (
-            <li key={s.title} className="flex gap-4 rounded-2xl bg-card p-5 ring-1 ring-line">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-match-soft text-match">{s.icon}</span>
-              <div>
-                <p className="font-semibold"><span className="num mr-2 text-muted">{i + 1}.</span>{s.title}</p>
-                <p className="mt-1 text-sm text-muted">{s.text}</p>
+        <ol className="mt-6 grid gap-4 sm:grid-cols-2">
+          {STEPS.map((s, i) => (
+            <li key={s.title} className="rounded-2xl bg-card p-5 ring-1 ring-line">
+              <div className="flex items-center gap-3">
+                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-match-soft text-match">{s.icon}</span>
+                <p className="font-semibold"><span className="num mr-1.5 text-muted">{i + 1}.</span>{s.title}</p>
               </div>
+              <p className="mt-3 text-sm text-muted">{s.text}</p>
             </li>
           ))}
         </ol>
-        <div className="mt-5 flex gap-3 rounded-2xl bg-eob-soft/60 p-5 text-sm">
-          <Bot size={18} className="mt-0.5 shrink-0 text-eob" />
-          <p>
-            <span className="font-semibold">Where AI fits.</span> Gemini helps read unusual document layouts and writes a short
-            summary. It never decides whether something is a discrepancy. That's always arithmetic you can check.
-          </p>
-        </div>
+        <p className="mt-5 rounded-2xl bg-match-soft/60 p-5 text-sm">
+          <span className="font-semibold">No guesswork.</span> Every item we flag shows the exact numbers behind it, so you
+          can see for yourself why it stood out.
+        </p>
       </section>
 
       <section>
-        <h2 className="font-display text-2xl">The team</h2>
-        <p className="mt-1 text-sm text-muted">Built in 24 hours at HackRU Fall 2026, Rutgers University.</p>
-        <ul className="mt-5 grid gap-4 sm:grid-cols-3">
-          {TEAM.map((m) => (
-            <li key={m.name} className="rounded-2xl bg-card p-5 ring-1 ring-line">
-              <span className="grid size-11 place-items-center rounded-full bg-paper text-muted ring-1 ring-line"><User size={20} /></span>
-              <p className="mt-3 font-semibold">{m.name}</p>
-              <p className="text-sm text-muted">{m.role}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <h2 className="font-display text-2xl">Built with</h2>
-        <ul className="mt-4 flex flex-wrap gap-2">
-          {STACK.map((t) => (
-            <li key={t} className="rounded-full bg-card px-3 py-1 text-sm ring-1 ring-line">{t}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <h2 className="font-display text-2xl">Limitations</h2>
+        <h2 className="font-display text-2xl">Disclaimers</h2>
         <ul className="mt-4 list-disc space-y-2 pl-5 text-muted">
-          <li>BillBuddy prepares questions. It doesn't confirm billing errors or give medical, legal or financial advice.</li>
-          <li>Bills and EOBs come in thousands of layouts. The rules parser covers common ones; unusual layouts depend on Gemini being available.</li>
-          <li>It compares one bill with one EOB for the same claim. Prior balances or charges from other claims can explain some differences.</li>
-          <li>Sample documents on this site are fictional. Uploaded files are analyzed and not stored.</li>
+          {DISCLAIMERS.map((d) => <li key={d}>{d}</li>)}
         </ul>
       </section>
 
