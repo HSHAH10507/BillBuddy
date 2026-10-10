@@ -135,7 +135,16 @@ async def analyze(bill: UploadFile = File(...), eob: UploadFile = File(...)):
     a = extract_document(await _read(bill), bill.filename or "bill", bill.content_type)
     b = extract_document(await _read(eob), eob.filename or "eob", eob.content_type)
     if not a.line_items and not b.line_items:
-        raise HTTPException(422, "Couldn't find any charges in either document. Try a clearer PDF or image.")
+        details = []
+        for d in (a, b):
+            chars = len(d.raw_text.strip())
+            notes = "; ".join(d.warnings) or "no warnings"
+            details.append(f"{d.filename}: read {chars} characters via {d.extraction_method}, 0 charges found ({notes})")
+            log.warning("No charges in %s. First 600 chars of text:\n%s", d.filename, d.raw_text[:600])
+        hint = ("" if gemini_enabled() else
+                " Gemini isn't enabled on this server, so only the built-in layout parser was tried; "
+                "set GEMINI_API_KEY to handle other layouts.")
+        raise HTTPException(422, "Couldn't find any charges in either document. " + " | ".join(details) + "." + hint)
     return analyze_documents(a, b)
 
 
