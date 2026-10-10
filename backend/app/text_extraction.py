@@ -20,7 +20,10 @@ if os.getenv("TESSERACT_CMD"):  # e.g. Windows installs that aren't on PATH
     pytesseract.pytesseract.tesseract_cmd = os.environ["TESSERACT_CMD"]
 
 MIN_CHARS_FOR_TEXT_LAYER = 40
-OCR_DPI = 300
+# Tuned for small hosting instances (e.g. Render free: 512 MB RAM, a fraction of a CPU).
+OCR_DPI = int(os.getenv("OCR_DPI", "200"))
+MAX_PAGES = int(os.getenv("MAX_PAGES", "10"))
+MAX_IMAGE_SIDE = 2600  # downscale large phone photos before OCR
 
 
 @dataclass
@@ -57,22 +60,29 @@ def extract_text(data: bytes, filename: str, content_type: str | None = None) ->
     result = TextResult()
 
     if is_pdf:
-        with pdfplumber.open(io.BytesIO(data)) as pdf:
-            text_pages = [(i + 1, page.extract_text() or "") for i, page in enumerate(pdf.pages)]
-        doc = pymupdf.open(stream=data, filetype="pdf")
-        for page_no, text in text_pages:
-            if len(text.strip()) >= MIN_CHARS_FOR_TEXT_LAYER:
-                result.pages.append(PageText(page_no, text, "pdf-text"))
-                continue
-            # Scanned page: rasterize and OCR it.
-            pix = doc[page_no - 1].get_pixmap(dpi=OCR_DPI)
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
-            result.pages.append(PageText(page_no, _ocr_image(img), "ocr"))
-        doc.close()
+        # Process one page at a time and release it, so memory stays flat on long PDFs.
+        with pdfplumber.open(io.BytesIO(data)) as pdf, pymupdf.open(stream=data, filetype="pdf") as doc:
+            n_pages = len(pdf.pages)
+            if n_pages > MAX_PAGES:
+                result.warnings.append(f"{filename} has {n_pages} pages; only the first {MAX_PAGES} were read.")
+            for i in range(min(n_pages, MAX_PAGES)):
+                page = pdf.pages[i]
+                text = page.extract_text() or ""
+                page.close()
+                if len(text.strip()) >= MIN_CHARS_FOR_TEXT_LAYER:
+                    result.pages.append(PageText(i + 1, text, "pdf-text"))
+                    continue
+                # Scanned page: rasterize in grayscale and OCR it.
+                pix = doc[i].get_pixmap(dpi=OCR_DPI, colorspace=pymupdf.csGRAY, alpha=False)
+                img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
+                del pix
+                result.pages.append(PageText(i + 1, _ocr_image(img), "ocr"))
+                del img
     else:
         try:
             img = Image.open(io.BytesIO(data))
             img = ImageOps.exif_transpose(img)
+            img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
         except Exception as exc:  # noqa: BLE001
             result.warnings.append(f"Could not open {filename} as an image or PDF: {exc}")
             return result

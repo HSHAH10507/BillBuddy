@@ -20,8 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
 COPY --from=web /web/dist ./static
 
+# OMP_THREAD_LIMIT=1: Tesseract's multithreading is slower on small shared CPUs.
 ENV FRONTEND_DIST=/app/static \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    OMP_THREAD_LIMIT=1
 EXPOSE 8000
 # Hosting platforms set $PORT; default to 8000 locally.
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

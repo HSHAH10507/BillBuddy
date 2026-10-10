@@ -10,11 +10,14 @@ export const shortDate = (iso: string | null) => {
 };
 
 async function readError(res: Response) {
+  if ([502, 503, 504].includes(res.status)) {
+    return `The server didn't respond (${res.status}). It may be waking up, restarting, or out of memory. Wait a minute and try again; if it keeps happening, check the server logs.`;
+  }
   try {
     const body = await res.json();
     return typeof body.detail === "string" ? body.detail : `Request failed (${res.status})`;
   } catch {
-    return `Request failed (${res.status}). Is the backend running on port 8000?`;
+    return `Request failed (${res.status}). Check that the backend server is running.`;
   }
 }
 
