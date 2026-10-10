@@ -43,3 +43,19 @@ def test_scanned_bill_goes_through_ocr():
 
 def test_abbreviations_are_normalised():
     assert "complete blood count" in normalize_description("CBC w/ auto diff")
+
+
+def test_description_first_layout_without_gemini():
+    """Team's own sample layout: code inside the description, EOB rows without dates,
+    a combined 'Copay / coins.' column, and summary labels above their amounts."""
+    files = {
+        "bill": ("bill.pdf", open("tests/fixtures/BillBuddy_Sample_Medical_Bill.pdf", "rb"), "application/pdf"),
+        "eob": ("eob.pdf", open("tests/fixtures/BillBuddy_Sample_EOB.pdf", "rb"), "application/pdf"),
+    }
+    r = client.post("/api/analyze", files=files).json()
+    assert [i["code"] for i in r["bill"]["line_items"]] == ["99213", "85025", "80053"]
+    assert r["eob"]["line_items"][1]["service_date"] == "2026-09-14"
+    assert r["bill"]["totals"]["patient_responsibility"] == 125.8
+    assert r["eob"]["totals"]["patient_responsibility"] == 110.8
+    assert r["stats"]["matched"] == 3
+    assert "patient_total_mismatch" in _rules(r)

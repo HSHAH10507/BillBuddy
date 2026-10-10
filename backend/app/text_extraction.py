@@ -26,6 +26,28 @@ MAX_PAGES = int(os.getenv("MAX_PAGES", "10"))
 MAX_IMAGE_SIDE = 2600  # downscale large phone photos before OCR
 
 
+def pdf_page_lines(page, y_tol: float = 2.5) -> str:
+    """Rebuild text lines from PyMuPDF spans (pieces of text as drawn), grouped by vertical
+    position and ordered left to right. Unlike character-level extraction, this keeps columns
+    apart even when a long description overlaps the next column."""
+    spans = []
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            for span in line["spans"]:
+                t = span["text"].strip()
+                if t:
+                    x0, y0, _, y1 = span["bbox"]
+                    spans.append(((y0 + y1) / 2, x0, t))
+    spans.sort()
+    rows: list[list] = []
+    for yc, x0, t in spans:
+        if rows and abs(rows[-1][0] - yc) <= y_tol:
+            rows[-1][1].append((x0, t))
+        else:
+            rows.append([yc, [(x0, t)]])
+    return "\n".join(" ".join(t for _, t in sorted(r[1])) for r in rows)
+
+
 @dataclass
 class PageText:
     page: int
@@ -61,19 +83,22 @@ def extract_text(data: bytes, filename: str, content_type: str | None = None) ->
 
     if is_pdf:
         # Process one page at a time and release it, so memory stays flat on long PDFs.
-        with pdfplumber.open(io.BytesIO(data)) as pdf, pymupdf.open(stream=data, filetype="pdf") as doc:
-            n_pages = len(pdf.pages)
+        with pymupdf.open(stream=data, filetype="pdf") as doc:
+            n_pages = len(doc)
             if n_pages > MAX_PAGES:
                 result.warnings.append(f"{filename} has {n_pages} pages; only the first {MAX_PAGES} were read.")
             for i in range(min(n_pages, MAX_PAGES)):
-                page = pdf.pages[i]
-                text = page.extract_text() or ""
-                page.close()
+                page = doc[i]
+                text = pdf_page_lines(page)
+                if len(text.strip()) < MIN_CHARS_FOR_TEXT_LAYER:
+                    # Some PDFs store text in ways PyMuPDF spans miss; try pdfplumber before OCR.
+                    with pdfplumber.open(io.BytesIO(data)) as pdf:
+                        text = pdf.pages[i].extract_text() or ""
                 if len(text.strip()) >= MIN_CHARS_FOR_TEXT_LAYER:
                     result.pages.append(PageText(i + 1, text, "pdf-text"))
                     continue
                 # Scanned page: rasterize in grayscale and OCR it.
-                pix = doc[i].get_pixmap(dpi=OCR_DPI, colorspace=pymupdf.csGRAY, alpha=False)
+                pix = page.get_pixmap(dpi=OCR_DPI, colorspace=pymupdf.csGRAY, alpha=False)
                 img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
                 del pix
                 result.pages.append(PageText(i + 1, _ocr_image(img), "ocr"))

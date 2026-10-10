@@ -2,8 +2,13 @@
 
 Two extractors produce the same `ExtractedDocument`:
 
-* `parse_with_rules` - deterministic regex/heuristic parser. Fast, offline, and works on
-  typical statement layouts (rows that start with a date and end with dollar amounts).
+* `parse_with_rules` - deterministic regex/heuristic parser. Fast and offline. It handles the
+  common statement layouts:
+    - rows that start with a date and code   ("03/14/2026 99214 Office visit ... $285.00")
+    - rows that start with the description   ("Office visit — 99213 09/14/26 $180.00 $55.00 ...")
+    - rows with no date (the document-level "Date(s) of service" is used instead)
+    - money columns named in a header row, including combined ones like "Copay / coins."
+    - totals printed as "Label $amount", as a "Totals" row, or as a label row followed by an amount row
 * `parse_with_gemini` (in gemini_client.py) - used when the rules parser can't find line
   items, or when EXTRACTOR=gemini. Handles unusual layouts.
 """
@@ -19,10 +24,10 @@ from .text_extraction import TextResult
 
 AMOUNT_RE = re.compile(r"^\(?-?[\$S]?-?\(?[\d,]*\d\.\d{2}\)?$")
 DATE_RE = r"\d{1,2}/\d{1,2}/\d{2,4}"
-LINE_RE = re.compile(
-    rf"^(?P<date>{DATE_RE})\s+(?:(?:-|to|thru)\s*{DATE_RE}\s+)?"
-    r"(?:(?P<code>[A-Z]?\d{4,5}[A-Z]?)(?:-[A-Z0-9]{2})?\s+)?(?P<rest>.+)$"
-)
+DATE_SEARCH = re.compile(rf"(?<![\d/]){DATE_RE}(?![\d/])")
+# CPT (5 digits, optionally a letter suffix) or HCPCS (letter + 4 digits), optional modifier.
+CODE_SEARCH = re.compile(r"(?<![\w/$.,-])([A-Z]\d{4}|\d{4,5}[A-Z]?)(?:-[A-Z0-9]{2})?(?![\w/.,])")
+LEDGER_WORDS = re.compile(r"\b(payment|write.?off|refund|transfer)\b", re.I)
 
 
 def parse_amount(token: str) -> float | None:
@@ -47,6 +52,11 @@ def parse_date(token: str) -> str | None:
     return None
 
 
+def normalize_line(line: str) -> str:
+    """Separate glued tokens like '85025$95.00' -> '85025 $95.00'."""
+    return re.sub(r"(?<=[0-9A-Za-z.)])\$", " $", line).strip()
+
+
 def split_trailing_amounts(rest: str) -> tuple[str, list[float]]:
     """'CBC with auto diff $145.00 $12.00' -> ('CBC with auto diff', [145.0, 12.0])."""
     tokens = rest.split()
@@ -61,7 +71,10 @@ def split_trailing_amounts(rest: str) -> tuple[str, list[float]]:
 
 def detect_doc_type(text: str) -> DocType:
     t = text.lower()
-    eob_hits = sum(k in t for k in ("explanation of benefits", "this is not a bill", "plan paid", "allowed amount"))
+    eob_hits = sum(k in t for k in (
+        "explanation of benefits", "this is not a bill", "it is not a bill", "plan paid", "allowed amount",
+        "member owes",
+    ))
     bill_hits = sum(k in t for k in ("statement", "amount due", "balance due", "pay this amount", "please pay"))
     if eob_hits > bill_hits:
         return "eob"
@@ -70,68 +83,79 @@ def detect_doc_type(text: str) -> DocType:
     return "unknown"
 
 
-# ---------- EOB column mapping ----------
+def _ordered_matches(text: str, patterns: list[tuple[str, str]]) -> list[tuple[int, str]]:
+    """Find every pattern in `text`, blanking each match so later patterns can't reuse it.
+    Returns (position, field) sorted by position, i.e. the left-to-right column order."""
+    taken = text.lower()
+    found: list[tuple[int, str]] = []
+    for pattern, fieldname in patterns:
+        for m in re.finditer(pattern, taken):
+            found.append((m.start(), fieldname))
+            taken = taken[: m.start()] + " " * (m.end() - m.start()) + taken[m.end():]
+    return sorted(found)
 
-# keyword -> LineItem field. Order of appearance in the header row decides the column order.
-EOB_COLUMN_KEYWORDS: list[tuple[str, str]] = [
-    (r"billed|amount charged|charges?", "billed"),
-    (r"discount|not allowed|adjust\w*|network savings", "adjustment"),
+
+# ---------- money columns in line-item tables ----------
+
+# Order matters: more specific patterns first (each match is blanked out before the next pattern).
+COLUMN_KEYWORDS: list[tuple[str, str]] = [
+    (r"copay\s*/\s*coins\w*\.?", "coinsurance"),  # combined column
+    (r"you (?:may )?owe|patient resp\w*|your share|patient portion|member owes|patient owes|amount you owe", "patient_responsibility"),
+    (r"plan paid|paid by plan|plan payment|insurance pay\w*|insurance paid", "plan_paid"),
+    (r"not covered", "not_covered"),
+    (r"discount|not allowed|adjust\w*|network savings|write.?off", "adjustment"),
     (r"allowed", "allowed"),
-    (r"plan paid|paid by plan|plan payment|insurance paid", "plan_paid"),
+    (r"billed|amount charged|charges?", "billed"),
     (r"deductible", "deductible"),
     (r"copay\w*", "copay"),
-    (r"coins\w*\.?|coinsurance", "coinsurance"),
-    (r"not covered", "not_covered"),
-    (r"you (?:may )?owe|patient resp\w*|your share", "patient_responsibility"),
+    (r"coinsurance|coins\.?", "coinsurance"),
 ]
 DEFAULT_EOB_COLUMNS = [
     "billed", "adjustment", "allowed", "plan_paid", "deductible", "copay", "coinsurance", "patient_responsibility",
 ]
 
 
-def detect_eob_columns(lines: list[str]) -> list[str] | None:
-    for line in lines:
-        low = line.lower()
-        if "billed" in low and "allowed" in low:
-            found: list[tuple[int, str]] = []
-            taken = low
-            for pattern, fieldname in EOB_COLUMN_KEYWORDS:
-                m = re.search(pattern, taken)
-                if m:
-                    found.append((m.start(), fieldname))
-                    # blank out the match so "allowed" inside "not allowed" isn't reused
-                    taken = taken[: m.start()] + " " * (m.end() - m.start()) + taken[m.end():]
-            if len(found) >= 4:
-                return [f for _, f in sorted(found)]
-    return None
+def header_columns(line: str) -> list[str] | None:
+    cols = [f for _, f in _ordered_matches(line, COLUMN_KEYWORDS)]
+    return cols if cols and ("billed" in cols or len(cols) >= 2) else None
 
 
 # ---------- header fields & totals ----------
 
+# Labels match in any case ((?i:...)); values must start with a capital letter or digit, so
+# "Patient Statement" isn't mistaken for a patient name.
+STOP = r"(?=\s+(?i:account|member|dob|claim|id|group|statement|date|due|npi|provider|processed)\b|\s*\||$)"
 FIELD_PATTERNS = {
-    "patient": r"patient(?: name)?\s*:\s*(.+?)(?=\s+(?:account|member|dob|claim|id|group)\b|$)",
-    "claim_id": r"claim\s*(?:#|no\.?|number|id)\s*:?\s*([A-Z0-9-]{4,})",
-    "account_id": r"account\s*(?:#|no\.?|number)\s*:?\s*([A-Z0-9-]{4,})",
-    "provider": r"(?:provider|rendering provider|billing provider|facility)\s*:\s*(.+?)(?=\s+(?:npi|claim|account)\b|$)",
-    "insurer": r"(?:insurer|health plan|plan name|insurance)\s*:\s*(.+?)(?=\s+(?:member|group|id)\b|$)",
+    "patient": rf"\b(?i:patient|member)(?i: name)?(?:\s*:\s*|\s+(?=[A-Z][a-z]+\s+[A-Z]))(.+?){STOP}",
+    "claim_id": r"\b(?i:claim)\s*(?i:#|no\.?|number|id|reference|ref\.?)\s*:?\s*([A-Z0-9][A-Z0-9-]{3,})",
+    "account_id": r"\b(?i:account)\s*(?i:#|no\.?|number)\s*:?\s*([A-Z0-9][A-Z0-9-]{3,})",
+    "provider": rf"\b(?i:(?:rendering |billing )?(?:provider|facility))(?:\s*:\s*|\s+(?=[A-Z]))(.+?){STOP}",
+    "insurer": rf"\b(?i:insurer|health plan|plan name|insurance(?: listed)?)(?:\s*:\s*|\s+(?=[A-Z]))(.+?){STOP}",
 }
+SERVICE_DATE = re.compile(rf"(?:date\(?s?\)?\s+of\s+service|service\s+date|dos)\s*:?\s*({DATE_RE})", re.I)
 
-TOTAL_PATTERNS = [
+TOTAL_PATTERNS: list[tuple[str, str]] = [
+    ("patient_responsibility", r"amount due|balance due|total you (?:may )?owe|(?:total )?patient responsibility|"
+                               r"member owes|pay this amount|you may owe"),
+    ("insurance_paid", r"insurance payments?|insurance paid|(?:total )?plan paid|paid by plan|plan payments?"),
+    ("patient_payments", r"patient payments?|payments received|payments?\s*/\s*credits"),
     ("total_billed", r"total (?:charges|billed|amount billed)"),
-    ("insurance_paid", r"insurance payments?|total (?:plan paid|paid by plan)|plan payments?|insurance paid"),
-    ("adjustments", r"(?:insurance |contractual )?adjustments?|network discount|total discount"),
-    ("patient_payments", r"patient payments?|payments received"),
-    ("patient_responsibility", r"amount due|balance due|total you (?:may )?owe|total patient responsibility|pay this amount"),
+    ("_ignore", r"total allowed|allowed"),
+    ("adjustments", r"(?:insurance |contractual )?adjustments?|network discount|total discount|discounts?"),
 ]
 
 
 def _find_field(lines: list[str], key: str) -> str | None:
-    pattern = re.compile(FIELD_PATTERNS[key], re.IGNORECASE)
+    pattern = re.compile(FIELD_PATTERNS[key])
     for line in lines:
         m = pattern.search(line)
-        if m:
-            return m.group(1).strip(" .:")
+        if m and m.group(1).strip(" .:|"):
+            return m.group(1).strip(" .:|")
     return None
+
+
+def _total_label_columns(line: str) -> list[str]:
+    return [f for _, f in _ordered_matches(line, [(p, k) for k, p in TOTAL_PATTERNS])]
 
 
 def parse_with_rules(text_result: TextResult, filename: str) -> ExtractedDocument:
@@ -145,68 +169,102 @@ def parse_with_rules(text_result: TextResult, filename: str) -> ExtractedDocumen
         warnings=list(text_result.warnings),
     )
 
-    all_lines = [(p.page, ln.strip()) for p in text_result.pages for ln in p.text.splitlines() if ln.strip()]
+    all_lines = [(p.page, normalize_line(ln)) for p in text_result.pages for ln in p.text.splitlines() if ln.strip()]
     plain = [ln for _, ln in all_lines]
 
     for key in ("patient", "claim_id", "account_id", "provider", "insurer"):
         setattr(doc, key, _find_field(plain, key))
-    # Statements usually print the facility name as the first line; EOBs print the insurer.
+    # Fallbacks: statements usually print the facility first; EOBs print the insurer near the top.
     if plain:
         if doc_type == "bill" and not doc.provider:
-            doc.provider = plain[0]
+            doc.provider = plain[0].split("|")[0].strip()
         if doc_type == "eob" and not doc.insurer:
-            doc.insurer = re.sub(r"(?i)\s*(explanation of benefits|eob|this is not a bill).*$", "", plain[0]).strip()
+            for cand in plain[:3]:
+                name = re.sub(r"(?i)\s*(explanation of benefits|\(?eob\)?|this is not a bill).*$", "", cand.split("|")[0]).strip()
+                if name:
+                    doc.insurer = name
+                    break
 
-    eob_columns = detect_eob_columns(plain) if doc_type == "eob" else None
-    if doc_type == "eob" and not eob_columns:
-        eob_columns = DEFAULT_EOB_COLUMNS
-        doc.warnings.append("EOB column header not found; assumed the standard column order.")
+    m = SERVICE_DATE.search(full)
+    default_date = parse_date(m.group(1)) if m else None
 
+    columns: list[str] | None = None
     totals = Totals()
+    pending_total_labels: tuple[list[str], int, str] | None = None
     n = 0
+
+    def set_total(key: str, value: float, page: int, text: str):
+        if key != "_ignore" and getattr(totals, key) is None:
+            setattr(totals, key, abs(value))
+            totals.source[key] = SourceRef(page=page, text=text)
+
     for page, line in all_lines:
-        m = LINE_RE.match(line)
-        if m:
-            desc, amounts = split_trailing_amounts(m.group("rest"))
-            date = parse_date(m.group("date"))
-            is_ledger_row = bool(re.search(r"\b(payment|adjustment|write.?off|refund|transfer)\b", desc, re.I))
-            if amounts and date and desc and not is_ledger_row:
+        low = line.lower()
+        desc_part, amounts = split_trailing_amounts(line)
+
+        # A row of amounts right under a row of total labels ("Total charges  Balance due" / "$415.00  $125.80")
+        if pending_total_labels and amounts and not desc_part:
+            labels, lpage, ltext = pending_total_labels
+            if len(labels) == len(amounts):
+                for key, value in zip(labels, amounts):
+                    set_total(key, value, page, f"{ltext} / {line}")
+            pending_total_labels = None
+            continue
+        pending_total_labels = None
+
+        if not amounts:
+            total_labels = _total_label_columns(line)
+            if len(total_labels) >= 2 and re.search(r"\btotal|balance due|amount due|summary", low):
+                pending_total_labels = (total_labels, page, line)
+            elif header_columns(line) and not re.search(r"\btotal", low):
+                columns = header_columns(line)
+            continue
+
+        # Line item: has amounts, a description, and a date or billing code.
+        date_m = DATE_SEARCH.search(desc_part)
+        code_m = CODE_SEARCH.search(DATE_SEARCH.sub(" ", desc_part))
+        if (date_m or code_m) and not low.startswith("total") and not LEDGER_WORDS.search(desc_part):
+            desc = DATE_SEARCH.sub(" ", desc_part)
+            if code_m:
+                desc = desc.replace(code_m.group(0), " ", 1)
+            desc = re.sub(r"\s+", " ", desc).strip(" -—–|:,")
+            if desc:
                 n += 1
                 item = LineItem(
                     id=f"{doc_type[0]}{n}",
-                    service_date=date,
-                    code=m.group("code"),
+                    service_date=parse_date(date_m.group(0)) if date_m else default_date,
+                    code=code_m.group(1) if code_m else None,
                     description=desc,
                     source=SourceRef(page=page, text=line),
                 )
-                if doc_type == "eob" and eob_columns:
-                    for fieldname, value in zip(eob_columns, amounts[-len(eob_columns):]):
+                cols = columns or (DEFAULT_EOB_COLUMNS if doc_type == "eob" else None)
+                if cols:
+                    use = cols[-len(amounts):] if len(amounts) <= len(cols) else cols
+                    vals = amounts[-len(use):]
+                    for fieldname, value in zip(use, vals):
                         setattr(item, fieldname, abs(value))
                 else:
-                    item.billed = amounts[-1]
+                    item.billed = abs(amounts[0])
                 doc.line_items.append(item)
                 continue
 
-        # Totals rows
-        low = line.lower()
-        _, amounts = split_trailing_amounts(line)
-        if not amounts:
+        # "Totals" row aligned with the item columns
+        if low.startswith("total") and columns and len(amounts) >= 2:
+            mapping = dict(zip(columns[-len(amounts):], amounts))
+            for col, key in (("billed", "total_billed"), ("adjustment", "adjustments"),
+                             ("plan_paid", "insurance_paid"), ("patient_responsibility", "patient_responsibility")):
+                if col in mapping:
+                    set_total(key, mapping[col], page, line)
             continue
-        if doc_type == "eob" and eob_columns and low.startswith("total") and len(amounts) >= 4:
-            mapping = dict(zip(eob_columns, amounts[-len(eob_columns):]))
-            totals.total_billed = mapping.get("billed")
-            totals.adjustments = mapping.get("adjustment")
-            totals.insurance_paid = mapping.get("plan_paid")
-            totals.patient_responsibility = mapping.get("patient_responsibility")
-            for k in ("total_billed", "adjustments", "insurance_paid", "patient_responsibility"):
-                totals.source[k] = SourceRef(page=page, text=line)
-            continue
+
+        # "Label  $amount" totals
         for key, pattern in TOTAL_PATTERNS:
-            if re.search(pattern, low) and getattr(totals, key) is None:
-                setattr(totals, key, abs(amounts[-1]))
-                totals.source[key] = SourceRef(page=page, text=line)
+            if re.search(pattern, low):
+                set_total(key, amounts[-1], page, line)
                 break
 
+    if doc_type == "eob" and not columns and doc.line_items:
+        doc.warnings.append("EOB column header not found; assumed the standard column order.")
     doc.totals = totals
     if not doc.line_items:
         doc.warnings.append("No line items recognised by the rules parser.")

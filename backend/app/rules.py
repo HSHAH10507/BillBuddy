@@ -23,7 +23,7 @@ def fdate(iso: Optional[str]) -> str:
         return "an unknown date"
     from datetime import date
     d = date.fromisoformat(iso)
-    return f"{d.strftime('%b')} {d.day}, {d.year}"
+    return f"{d.strftime('%b')} {d.day}, {d.year}"  # e.g. "Mar 14, 2026" (portable; %-d fails on Windows)
 
 
 def loc(src: Optional[SourceRef]) -> Optional[str]:
@@ -229,6 +229,26 @@ def detect_discrepancies(bill: ExtractedDocument, eob: ExtractedDocument, matche
                 related_items=[e.id],
             )
 
+    for b in bill.line_items:
+        if None in (b.billed, b.adjustment, b.plan_paid, b.patient_responsibility):
+            continue
+        expected = round(b.billed - b.adjustment - b.plan_paid, 2)
+        if _neq(expected, b.patient_responsibility):
+            out.add(
+                rule="bill_line_not_reconciling", severity="review", ask="provider",
+                title=f"Bill line doesn't add up: {b.description}",
+                detected=f"Charge {money(b.billed)} \u2212 adjustment {money(b.adjustment)} \u2212 insurance payment "
+                         f"{money(b.plan_paid)} = {money(expected)}, but your portion is listed as {money(b.patient_responsibility)}.",
+                evidence=[
+                    Evidence(document="bill", field="Line item", value=_label(b), location=loc(b.source)),
+                    Evidence(document="computed", field="Charge \u2212 adjustment \u2212 insurance", value=money(expected)),
+                ],
+                why_flagged="Your portion of a line normally equals the charge minus adjustments and insurance payments.",
+                cannot_determine="Whether another credit or fee applies to this line.",
+                suggested_question=f"How was my portion of {money(b.patient_responsibility)} for {b.description} calculated?",
+                amount_at_stake=abs(round(expected - b.patient_responsibility, 2)), related_items=[b.id],
+            )
+
     # --- 4. Document totals vs the sum of their lines ---------------------------------
     def total_check(doc: ExtractedDocument, field: str, label: str, line_attr: str):
         stated = getattr(doc.totals, field)
@@ -252,6 +272,7 @@ def detect_discrepancies(bill: ExtractedDocument, eob: ExtractedDocument, matche
             )
 
     total_check(bill, "total_billed", "Total charges", "billed")
+    total_check(bill, "patient_responsibility", "Balance due", "patient_responsibility")
     total_check(eob, "total_billed", "Total billed", "billed")
     total_check(eob, "patient_responsibility", "Total you may owe", "patient_responsibility")
     total_check(eob, "insurance_paid", "Total plan paid", "plan_paid")
