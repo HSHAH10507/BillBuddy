@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, Loader2, RotateCcw } from "lucide-react";
-import type { AnalysisResult } from "../types";
-import { analyzeFiles, downloadReport } from "../lib";
+import type { AnalysisResult, CodeExplanation } from "../types";
+import { analyzeFiles, downloadReport, explainCodes } from "../lib";
 import UploadPanel from "../components/UploadPanel";
 import Analyzing from "../components/Analyzing";
 import SummaryHeader from "../components/SummaryHeader";
@@ -10,6 +10,8 @@ import { ChargeComparison, MoneyFlow } from "../components/Charts";
 import Findings from "../components/Findings";
 import Glossary from "../components/Glossary";
 import ExtractionDetails from "../components/ExtractionDetails";
+import Deadlines from "../components/Deadlines";
+import ServicesExplained from "../components/ServicesExplained";
 
 /** The comparison tool: upload a bill + EOB, then see the analysis. (Was the old App.tsx body.) */
 export default function AnalyzePage() {
@@ -19,13 +21,28 @@ export default function AnalyzePage() {
   const [focus, setFocus] = useState<string[]>([]);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  // null = still loading; filled in after the results appear so a slow AI call never delays them
+  const [explanations, setExplanations] = useState<Record<string, CodeExplanation> | null>(null);
+
+  useEffect(() => {
+    if (!result) return;
+    setExplanations(null);
+    const items = result.pricing.map((p) => ({ code: p.code, description: p.description }));
+    if (!items.length) { setExplanations({}); return; }
+    let cancelled = false;
+    explainCodes(items)
+      .then((e) => { if (!cancelled) setExplanations(e); })
+      .catch(() => { if (!cancelled) setExplanations({}); });
+    return () => { cancelled = true; };
+  }, [result]);
 
   async function saveReport() {
     if (!result) return;
     setDownloading(true);
     setDownloadError(null);
     try {
-      await downloadReport(result);
+      const code_explanations = Object.fromEntries(Object.entries(explanations ?? {}).map(([k, v]) => [k, v.text]));
+      await downloadReport({ ...result, code_explanations });
     } catch (e) {
       setDownloadError((e as Error).message);
     } finally {
@@ -78,7 +95,9 @@ export default function AnalyzePage() {
         </button>
       </div>
       <SummaryHeader data={result} />
+      <Deadlines deadlines={result.deadlines} />
       <MatchBoard data={result} focus={focus} onSelect={jumpToFinding} />
+      <ServicesExplained pricing={result.pricing} pricingSource={result.pricing_source} explanations={explanations} />
       <div className="grid gap-6 lg:grid-cols-2">
         <ChargeComparison data={result} />
         <MoneyFlow data={result} />

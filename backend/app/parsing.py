@@ -132,6 +132,11 @@ FIELD_PATTERNS = {
     "provider": rf"\b(?i:(?:rendering |billing )?(?:provider|facility))(?:\s*:\s*|\s+(?=[A-Z]))(.+?){STOP}",
     "insurer": rf"\b(?i:insurer|health plan|plan name|insurance(?: listed)?)(?:\s*:\s*|\s+(?=[A-Z]))(.+?){STOP}",
 }
+DOC_DATES = {
+    "statement_date": re.compile(rf"statement\s+date\s*:?\s*({DATE_RE})", re.I),
+    "due_date": re.compile(rf"(?:due\s+date|due\s+by|payment\s+due(?:\s+date)?|pay\s+by|please\s+pay\s+by)\s*:?\s*({DATE_RE})", re.I),
+    "processed_date": re.compile(rf"(?:processed(?:\s+date|\s+on)?|date\s+processed|claim\s+processed)\s*:?\s*({DATE_RE})", re.I),
+}
 SERVICE_DATE = re.compile(rf"(?:date\(?s?\)?\s+of\s+service|service\s+date|dos)\s*:?\s*({DATE_RE})", re.I)
 
 TOTAL_PATTERNS: list[tuple[str, str]] = [
@@ -189,6 +194,11 @@ def parse_with_rules(text_result: TextResult, filename: str) -> ExtractedDocumen
                 if name:
                     doc.insurer = name
                     break
+
+    for key, pattern in DOC_DATES.items():
+        dm = pattern.search(full)
+        if dm:
+            setattr(doc, key, parse_date(dm.group(1)))
 
     m = SERVICE_DATE.search(full)
     default_date = parse_date(m.group(1)) if m else None

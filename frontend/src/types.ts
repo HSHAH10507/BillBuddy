@@ -35,6 +35,9 @@ export interface ExtractedDocument {
   patient: string | null;
   claim_id: string | null;
   account_id: string | null;
+  statement_date: string | null;
+  due_date: string | null;
+  processed_date: string | null;
   line_items: LineItem[];
   totals: Totals;
   extraction_method: string;
@@ -77,6 +80,29 @@ export interface Finding {
 
 export interface GlossaryTerm { term: string; definition: string; in_your_documents: string | null }
 
+export interface Deadline {
+  id: string;
+  kind: "payment" | "followup" | "appeal";
+  title: string;
+  date: string;
+  description: string;
+  estimated: boolean;
+  source: string | null;
+}
+
+export interface PriceCheck {
+  code: string;
+  description: string;
+  billed: number | null;
+  allowed: number | null;
+  medicare_rate: number | null;
+  ratio: number | null;
+  level: "high" | "typical" | "unavailable";
+  note: string;
+}
+
+export interface CodeExplanation { text: string; source: "gemini" | "builtin" }
+
 export interface AnalysisResult {
   bill: ExtractedDocument;
   eob: ExtractedDocument;
@@ -94,4 +120,8 @@ export interface AnalysisResult {
     amount_in_question: number;
     gemini_enabled: boolean;
   };
+  deadlines: Deadline[];
+  pricing: PriceCheck[];
+  pricing_source: string | null;
+  code_explanations?: Record<string, string>;
 }

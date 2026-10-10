@@ -3,7 +3,7 @@
 All names, numbers, and organisations are invented. Planted issues (for the demo):
   1. Venipuncture (36415) billed twice on the bill, once on the EOB      -> possible duplicate, $35
   2. Metabolic panel (80053) is $210 on the bill but $190 on the EOB     -> billed amount mismatch, $20
-  3. Hemoglobin A1c dated 03/14 on the bill, 03/15 on the EOB            -> date mismatch
+  3. Hemoglobin A1c dated 09/22 on the bill, 09/23 on the EOB            -> date mismatch
   4. Chest X-ray EOB line: "you owe" $94 but deductible + coinsurance=$84 -> EOB line doesn't add up, $10
   5. Bill amount due $299 vs EOB "you may owe" $254                      -> totals differ by $45 (= 1 + 2)
 Everything else (office visit, CBC) matches, even though the descriptions are worded differently.
@@ -31,23 +31,23 @@ ACCENT_BILL = colors.HexColor("#0f5f5c")
 ACCENT_EOB = colors.HexColor("#3b3f9e")
 
 BILL_LINES = [
-    ("03/14/2026", "99214", "Office visit, est. patient, moderate", 285.00),
-    ("03/14/2026", "85025", "CBC w/ auto diff", 145.00),
-    ("03/14/2026", "80053", "Comprehensive metabolic panel", 210.00),
-    ("03/14/2026", "36415", "Venipuncture, routine blood draw", 35.00),
-    ("03/14/2026", "36415", "Venipuncture, routine blood draw", 35.00),
-    ("03/14/2026", "83036", "Hemoglobin A1c", 95.00),
-    ("03/14/2026", "71046", "XR chest 2 views", 320.00),
+    ("09/22/2026", "99214", "Office visit, est. patient, moderate", 285.00),
+    ("09/22/2026", "85025", "CBC w/ auto diff", 145.00),
+    ("09/22/2026", "80053", "Comprehensive metabolic panel", 210.00),
+    ("09/22/2026", "36415", "Venipuncture, routine blood draw", 35.00),
+    ("09/22/2026", "36415", "Venipuncture, routine blood draw", 35.00),
+    ("09/22/2026", "83036", "Hemoglobin A1c", 95.00),
+    ("09/22/2026", "71046", "XR chest 2 views", 320.00),
 ]
 
 # date, code, description, billed, discount, allowed, plan paid, deductible, copay, coins, you owe
 EOB_LINES = [
-    ("03/14/2026", "99214", "Office/outpatient visit, established", 285.00, 120.00, 165.00, 135.00, 0.00, 30.00, 0.00, 30.00),
-    ("03/14/2026", "85025", "Blood count; complete, automated", 145.00, 103.00, 42.00, 0.00, 42.00, 0.00, 0.00, 42.00),
-    ("03/14/2026", "80053", "Metabolic panel, comprehensive", 190.00, 142.00, 48.00, 0.00, 48.00, 0.00, 0.00, 48.00),
-    ("03/14/2026", "36415", "Collection of venous blood", 35.00, 25.00, 10.00, 0.00, 10.00, 0.00, 0.00, 10.00),
-    ("03/15/2026", "83036", "Hemoglobin; glycosylated (A1C)", 95.00, 65.00, 30.00, 0.00, 30.00, 0.00, 0.00, 30.00),
-    ("03/14/2026", "71046", "Radiologic exam, chest; 2 views", 320.00, 180.00, 140.00, 56.00, 70.00, 0.00, 14.00, 94.00),
+    ("09/22/2026", "99214", "Office/outpatient visit, established", 285.00, 120.00, 165.00, 135.00, 0.00, 30.00, 0.00, 30.00),
+    ("09/22/2026", "85025", "Blood count; complete, automated", 145.00, 103.00, 42.00, 0.00, 42.00, 0.00, 0.00, 42.00),
+    ("09/22/2026", "80053", "Metabolic panel, comprehensive", 190.00, 142.00, 48.00, 0.00, 48.00, 0.00, 0.00, 48.00),
+    ("09/22/2026", "36415", "Collection of venous blood", 35.00, 25.00, 10.00, 0.00, 10.00, 0.00, 0.00, 10.00),
+    ("09/23/2026", "83036", "Hemoglobin; glycosylated (A1C)", 95.00, 65.00, 30.00, 0.00, 30.00, 0.00, 0.00, 30.00),
+    ("09/22/2026", "71046", "Radiologic exam, chest; 2 views", 320.00, 180.00, 140.00, 56.00, 70.00, 0.00, 14.00, 94.00),
 ]
 
 
@@ -82,8 +82,8 @@ def make_bill(path: Path):
     c.setFont("Helvetica-Bold", 13)
     c.drawRightString(w - 48, h - 52, "PATIENT STATEMENT")
     c.setFont("Helvetica", 9.5)
-    c.drawRightString(w - 48, h - 68, "Statement Date: 04/10/2026")
-    c.drawRightString(w - 48, h - 81, "Due by: 05/10/2026")
+    c.drawRightString(w - 48, h - 68, "Statement Date: 10/06/2026")
+    c.drawRightString(w - 48, h - 81, "Due by: 11/05/2026")
 
     y = h - 118
     c.setFont("Helvetica", 10)
@@ -167,7 +167,7 @@ def make_eob(path: Path):
     c.setFillColor(INK)
     c.setFont("Helvetica", 10)
     left = ["Patient: Jordan Rivera", "Member ID: LHP884120577", "Group: 70412"]
-    right = ["Claim #: LHP-2026-0318842", "Provider: Riverbend Community Medical Center", "Processed: 04/02/2026"]
+    right = ["Claim #: LHP-2026-0318842", "Provider: Riverbend Community Medical Center", "Processed: 09/30/2026"]
     y = h - 84
     for a, b in zip(left, right):
         c.drawString(40, y, a)

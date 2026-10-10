@@ -49,6 +49,9 @@ class ExtractedDocument(BaseModel):
     patient: Optional[str] = None
     claim_id: Optional[str] = None
     account_id: Optional[str] = None
+    statement_date: Optional[str] = None  # ISO; bill
+    due_date: Optional[str] = None  # ISO; bill payment due date
+    processed_date: Optional[str] = None  # ISO; EOB claim processed date
     line_items: list[LineItem] = Field(default_factory=list)
     totals: Totals = Field(default_factory=Totals)
     extraction_method: str = ""  # e.g. "pdf-text + rules", "ocr + gemini"
@@ -93,6 +96,27 @@ class GlossaryTerm(BaseModel):
     in_your_documents: Optional[str] = None
 
 
+class Deadline(BaseModel):
+    id: str
+    kind: Literal["payment", "followup", "appeal"]
+    title: str
+    date: str  # ISO yyyy-mm-dd
+    description: str
+    estimated: bool = False
+    source: Optional[str] = None  # link explaining the rule
+
+
+class PriceCheck(BaseModel):
+    code: str
+    description: str
+    billed: Optional[float] = None  # what the provider charged
+    allowed: Optional[float] = None  # what the insurer allowed (EOB)
+    medicare_rate: Optional[float] = None  # benchmark, None when not available
+    ratio: Optional[float] = None  # billed / medicare_rate
+    level: Literal["high", "typical", "unavailable"]
+    note: str
+
+
 class AnalysisResult(BaseModel):
     bill: ExtractedDocument
     eob: ExtractedDocument
@@ -102,3 +126,8 @@ class AnalysisResult(BaseModel):
     summary: str
     summary_source: Literal["gemini", "template"]
     stats: dict
+    deadlines: list[Deadline] = Field(default_factory=list)
+    pricing: list[PriceCheck] = Field(default_factory=list)
+    pricing_source: Optional[str] = None
+    # Filled in by the browser after it asks /api/explain-codes; used when building the PDF report.
+    code_explanations: dict[str, str] = Field(default_factory=dict)

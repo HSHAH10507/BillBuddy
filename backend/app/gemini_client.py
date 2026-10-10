@@ -114,6 +114,9 @@ class _GDoc(BaseModel):
     patient: Optional[str] = None
     claim_id: Optional[str] = None
     account_id: Optional[str] = None
+    statement_date: Optional[str] = None
+    due_date: Optional[str] = None
+    processed_date: Optional[str] = None
     line_items: list[_GLine]
     total_billed: Optional[float] = None
     insurance_paid: Optional[float] = None
@@ -128,7 +131,7 @@ medical bill/statement ("bill") or an insurer's Explanation of Benefits ("eob").
 Return JSON only. Rules:
 - doc_type: "bill" or "eob".
 - One line_items entry per service line. Do NOT include payment or adjustment ledger rows on bills.
-- service_date as YYYY-MM-DD. code is the CPT/HCPCS code if printed, else null.
+- service_date, statement_date (bill), due_date (bill payment due) and processed_date (EOB) as YYYY-MM-DD. code is the CPT/HCPCS code if printed, else null.
 - All money as positive numbers without $ or commas. Use null when a value is not printed.
   Never compute or guess a missing value.
 - On bills, the line charge goes in `billed`.
@@ -171,6 +174,9 @@ def parse_with_gemini(page_texts: list[tuple[int, str]], filename: str, method: 
         patient=g.patient,
         claim_id=g.claim_id,
         account_id=g.account_id,
+        statement_date=g.statement_date,
+        due_date=g.due_date,
+        processed_date=g.processed_date,
         line_items=items,
         totals=Totals(
             total_billed=g.total_billed,

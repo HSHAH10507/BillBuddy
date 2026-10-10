@@ -68,3 +68,22 @@ def test_pdf_report_download():
     assert r.headers["content-type"] == "application/pdf"
     assert r.content[:4] == b"%PDF"
     assert "attachment" in r.headers["content-disposition"]
+
+
+def test_deadlines_pricing_and_code_explanations():
+    files = {
+        "bill": ("bill.pdf", open("tests/fixtures/BillBuddy_Sample_Medical_Bill.pdf", "rb"), "application/pdf"),
+        "eob": ("eob.pdf", open("tests/fixtures/BillBuddy_Sample_EOB.pdf", "rb"), "application/pdf"),
+    }
+    r = client.post("/api/analyze", files=files).json()
+    by_kind = {d["kind"]: d for d in r["deadlines"]}
+    assert by_kind["payment"]["date"] == "2026-10-30"
+    assert by_kind["appeal"]["date"] == "2027-03-27"  # processed 2026-09-28 + 180 days
+    visit = next(p for p in r["pricing"] if p["code"] == "99213")
+    assert visit["medicare_rate"] == 95.19 and visit["ratio"] == 1.9
+    assert next(p for p in r["pricing"] if p["code"] == "80053")["level"] == "unavailable"
+    e = client.post("/api/explain-codes", json={"items": [{"code": "99213", "description": "Office visit"}]}).json()
+    assert e["explanations"]["99213"]["text"]
+    # explanations flow into the PDF
+    r["code_explanations"] = {"99213": e["explanations"]["99213"]["text"]}
+    assert client.post("/api/report", json=r).content[:4] == b"%PDF"
