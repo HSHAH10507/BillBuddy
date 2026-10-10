@@ -9,7 +9,10 @@ Gemini never decides whether something is a discrepancy - that is done in rules.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
+import time
 from typing import Optional
 
 from pydantic import BaseModel
@@ -34,6 +37,46 @@ def _get_client():
 
 def _model() -> str:
     return os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+
+
+log = logging.getLogger("uvicorn.error")
+
+
+def _models() -> list[str]:
+    """Configured model first, then fallbacks in case it is overloaded or retired."""
+    out = []
+    for m in (_model(), os.getenv("GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest"), "gemini-2.5-flash"):
+        if m and m not in out:
+            out.append(m)
+    return out
+
+
+def _generate(contents: str, models: list[str] | None = None, attempts: int = 3, **config):
+    """Call Gemini with retries on temporary server errors (5xx / overloaded) and model fallbacks."""
+    from google.genai import errors, types
+
+    last: Exception | None = None
+    for model in models or _models():
+        for attempt in range(attempts):
+            try:
+                return _get_client().models.generate_content(
+                    model=model, contents=contents, config=types.GenerateContentConfig(**config)
+                )
+            except errors.ServerError as exc:  # 500/503: overloaded or internal, worth retrying
+                last = exc
+                log.warning("Gemini %s server error (attempt %d): %s", model, attempt + 1, str(exc)[:200])
+                time.sleep(1.0 * (attempt + 1))
+            except errors.ClientError as exc:
+                last = exc
+                log.warning("Gemini %s client error: %s", model, str(exc)[:200])
+                if getattr(exc, "code", None) in (404, 429):  # unknown model or rate limit: try next model
+                    break
+                raise
+    raise last if last else RuntimeError("Gemini call failed")
+
+
+def describe_error(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {str(exc)[:180]}"
 
 
 # ---------- 1. structured extraction ----------
@@ -92,16 +135,19 @@ def parse_with_gemini(page_texts: list[tuple[int, str]], filename: str, method: 
     from google.genai import types
 
     text = "\n".join(f"===== PAGE {p} =====\n{t}" for p, t in page_texts)
-    response = _get_client().models.generate_content(
-        model=_model(),
-        contents=EXTRACTION_PROMPT + text,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=_GDoc,
-            temperature=0,
-        ),
-    )
-    g = response.parsed if isinstance(response.parsed, _GDoc) else _GDoc.model_validate(json.loads(response.text))
+    try:
+        # Preferred: structured output constrained to the schema.
+        response = _generate(EXTRACTION_PROMPT + text, models=[_model()], attempts=2,
+                             response_mime_type="application/json", response_schema=_GDoc, temperature=0)
+        g = response.parsed if isinstance(response.parsed, _GDoc) else _GDoc.model_validate(json.loads(response.text))
+    except Exception as exc:  # noqa: BLE001
+        # Fallback: plain JSON mode with the schema described in the prompt (avoids schema-related API errors).
+        log.warning("Structured Gemini extraction failed (%s); retrying in plain JSON mode", describe_error(exc))
+        prompt = (EXTRACTION_PROMPT.replace("Document text", "JSON shape:\n" + json.dumps(_GDoc.model_json_schema())
+                                            + "\n\nDocument text") + text)
+        response = _generate(prompt, response_mime_type="application/json", temperature=0)
+        raw = re.sub(r"^```(?:json)?|```$", "", (response.text or "").strip(), flags=re.M).strip()
+        g = _GDoc.model_validate(json.loads(raw))
     doc_type = g.doc_type if g.doc_type in ("bill", "eob") else "unknown"
     items = []
     for i, ln in enumerate(g.line_items, start=1):
@@ -149,9 +195,5 @@ Data:
 def summarize_with_gemini(payload: dict) -> str:
     from google.genai import types
 
-    response = _get_client().models.generate_content(
-        model=_model(),
-        contents=SUMMARY_PROMPT + json.dumps(payload, indent=1),
-        config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=400),
-    )
+    response = _generate(SUMMARY_PROMPT + json.dumps(payload, indent=1), temperature=0.2, max_output_tokens=400)
     return (response.text or "").strip()

@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from .explain import build_glossary, build_summary  # noqa: E402
-from .gemini_client import gemini_enabled, parse_with_gemini  # noqa: E402
+from .gemini_client import describe_error, gemini_enabled, parse_with_gemini  # noqa: E402
 from .matching import match_documents  # noqa: E402
 from .models import AnalysisResult, ExtractedDocument  # noqa: E402
 from .parsing import parse_with_rules, rules_result_is_usable  # noqa: E402
@@ -79,7 +79,7 @@ def extract_document(data: bytes, filename: str, content_type: str | None) -> Ex
                 doc.doc_type = rules_doc.doc_type
             return doc
         except Exception as exc:  # noqa: BLE001
-            rules_doc.warnings.append(f"Gemini extraction failed, used rules parser instead ({type(exc).__name__}).")
+            rules_doc.warnings.append(f"Gemini extraction failed, used rules parser instead ({describe_error(exc)}).")
     elif mode == "auto" and not rules_result_is_usable(rules_doc) and not gemini_enabled():
         rules_doc.warnings.append("Layout not fully recognised. Add a GEMINI_API_KEY to handle unusual layouts.")
     return rules_doc
