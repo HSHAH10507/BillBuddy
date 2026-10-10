@@ -145,7 +145,8 @@ async def analyze(bill: UploadFile = File(...), eob: UploadFile = File(...)):
             chars = len(d.raw_text.strip())
             notes = "; ".join(d.warnings) or "no warnings"
             details.append(f"{d.filename}: read {chars} characters via {d.extraction_method}, 0 charges found ({notes})")
-            log.warning("No charges in %s. First 600 chars of text:\n%s", d.filename, d.raw_text[:600])
+            # Log only sizes and warnings, never document text (it can contain personal health information).
+            log.warning("No charges found in %s (%d characters read)", d.filename, chars)
         hint = ("" if gemini_enabled() else
                 " Gemini isn't enabled on this server, so only the built-in layout parser was tried; "
                 "set GEMINI_API_KEY to handle other layouts.")

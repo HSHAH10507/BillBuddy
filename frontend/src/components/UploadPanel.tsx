@@ -134,7 +134,7 @@ export default function UploadPanel({ onAnalyze, busy, error }: Props) {
         </button>
       </div>
       <p className="mt-6 text-center text-xs text-muted">
-        Sample documents are fictional. Files are processed by your local BillBuddy server and are not stored.
+        Sample documents are fictional. Uploaded files are analyzed and not stored.
       </p>
     </section>
   );
