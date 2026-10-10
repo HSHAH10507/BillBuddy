@@ -6,7 +6,9 @@ Pipeline for POST /api/analyze:
 """
 from __future__ import annotations
 
+import logging
 import os
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,6 +30,32 @@ SAMPLES_DIR = Path(__file__).resolve().parent.parent / "samples"
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
 app = FastAPI(title="BillBuddy Health API", version="1.0.0")
+log = logging.getLogger("uvicorn.error")
+
+
+def _rss_mb() -> float:
+    try:  # current memory of this process (Linux); used only for logging
+        with open("/proc/self/status") as f:
+            return next(int(l.split()[1]) for l in f if l.startswith("VmRSS")) / 1024
+    except Exception:  # noqa: BLE001
+        return -1.0
+
+
+@app.middleware("http")
+async def log_analysis_requests(request, call_next):
+    """Log when an analysis starts and finishes, with time and memory, so crashes are traceable."""
+    if request.method != "POST":
+        return await call_next(request)
+    start = time.perf_counter()
+    log.info("-> %s %s started (memory %.0f MB)", request.method, request.url.path, _rss_mb())
+    try:
+        response = await call_next(request)
+    except Exception:
+        log.exception("!! %s %s crashed after %.1fs", request.method, request.url.path, time.perf_counter() - start)
+        raise
+    log.info("<- %s %s finished %s in %.1fs (memory %.0f MB)", request.method, request.url.path,
+             response.status_code, time.perf_counter() - start, _rss_mb())
+    return response
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","),
@@ -147,7 +175,7 @@ if FRONTEND_DIST.is_dir():
     if (FRONTEND_DIST / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
-    @app.get("/{path:path}", include_in_schema=False)
+    @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     def serve_frontend(path: str):
         if path.startswith("api/"):
             raise HTTPException(404, "Not found")
