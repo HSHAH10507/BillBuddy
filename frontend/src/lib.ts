@@ -35,3 +35,22 @@ export async function fetchSampleFile(name: string, type: string): Promise<File>
   if (!res.ok) throw new Error("Couldn't load the sample documents. Is the backend running?");
   return new File([await res.blob()], name, { type });
 }
+
+/** Ask the backend to turn an analysis into a PDF, then save it in the browser. */
+export async function downloadReport(result: AnalysisResult): Promise<void> {
+  const res = await fetch("/api/report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(result),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? "BillBuddy_Report.pdf";
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

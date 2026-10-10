@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { Download, Loader2, RotateCcw } from "lucide-react";
 import type { AnalysisResult } from "../types";
-import { analyzeFiles } from "../lib";
+import { analyzeFiles, downloadReport } from "../lib";
 import UploadPanel from "../components/UploadPanel";
 import Analyzing from "../components/Analyzing";
 import SummaryHeader from "../components/SummaryHeader";
@@ -17,6 +17,21 @@ export default function AnalyzePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focus, setFocus] = useState<string[]>([]);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  async function saveReport() {
+    if (!result) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await downloadReport(result);
+    } catch (e) {
+      setDownloadError((e as Error).message);
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   async function run(bill: File, eob: File) {
     setBusy(true);
@@ -50,10 +65,16 @@ export default function AnalyzePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {downloadError && <p role="alert" className="mr-auto text-sm text-missing">{downloadError}</p>}
         <button type="button" onClick={reset}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-card px-3 py-1.5 text-sm ring-1 ring-line hover:bg-paper">
+          className="inline-flex items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-sm ring-1 ring-line hover:bg-paper">
           <RotateCcw size={14} /> New comparison
+        </button>
+        <button type="button" onClick={saveReport} disabled={downloading}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3.5 py-2 text-sm font-medium text-white shadow-sm hover:bg-ink/90 disabled:opacity-60">
+          {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+          {downloading ? "Preparing PDF…" : "Download PDF report"}
         </button>
       </div>
       <SummaryHeader data={result} />

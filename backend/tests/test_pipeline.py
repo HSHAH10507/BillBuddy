@@ -59,3 +59,12 @@ def test_description_first_layout_without_gemini():
     assert r["eob"]["totals"]["patient_responsibility"] == 110.8
     assert r["stats"]["matched"] == 3
     assert "patient_total_mismatch" in _rules(r)
+
+
+def test_pdf_report_download():
+    analysis = client.post("/api/analyze-samples").json()
+    r = client.post("/api/report", json=analysis)
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/pdf"
+    assert r.content[:4] == b"%PDF"
+    assert "attachment" in r.headers["content-disposition"]

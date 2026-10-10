@@ -14,7 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -152,6 +152,18 @@ async def analyze(bill: UploadFile = File(...), eob: UploadFile = File(...)):
                 "set GEMINI_API_KEY to handle other layouts.")
         raise HTTPException(422, "Couldn't find any charges in either document. " + " | ".join(details) + "." + hint)
     return await run_in_threadpool(analyze_documents, a, b)
+
+
+@app.post("/api/report")
+def download_report(result: AnalysisResult):
+    """Turn an analysis (as returned by /api/analyze) into a downloadable PDF report."""
+    from datetime import date
+
+    from .report import build_report_pdf
+
+    pdf = build_report_pdf(result)
+    name = f"BillBuddy_Report_{date.today().isoformat()}.pdf"
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/api/samples")

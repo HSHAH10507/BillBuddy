@@ -172,12 +172,17 @@ def parse_with_rules(text_result: TextResult, filename: str) -> ExtractedDocumen
     all_lines = [(p.page, normalize_line(ln)) for p in text_result.pages for ln in p.text.splitlines() if ln.strip()]
     plain = [ln for _, ln in all_lines]
 
+    title_words = re.compile(r"(?i)\s*(?:patient statement|statement|explanation of benefits|\(?eob\)?|"
+                             r"this is not a bill|medical bill)\b.*$")
     for key in ("patient", "claim_id", "account_id", "provider", "insurer"):
-        setattr(doc, key, _find_field(plain, key))
+        value = _find_field(plain, key)
+        if value and key in ("provider", "insurer"):
+            value = title_words.sub("", value).strip(" |-") or None  # drop document titles on the same line
+        setattr(doc, key, value)
     # Fallbacks: statements usually print the facility first; EOBs print the insurer near the top.
     if plain:
         if doc_type == "bill" and not doc.provider:
-            doc.provider = plain[0].split("|")[0].strip()
+            doc.provider = title_words.sub("", plain[0].split("|")[0]).strip() or None
         if doc_type == "eob" and not doc.insurer:
             for cand in plain[:3]:
                 name = re.sub(r"(?i)\s*(explanation of benefits|\(?eob\)?|this is not a bill).*$", "", cand.split("|")[0]).strip()
